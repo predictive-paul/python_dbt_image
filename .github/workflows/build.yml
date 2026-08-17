@@ -1,11 +1,13 @@
-# Build once, push to GHCR (and Artifact Registry when GCP auth is configured).
-# Local and CI share the same process: python3 build.py
+# Publish when a version tag is pushed (or via workflow_dispatch).
+# Local bump: python3 build.py --bump patch && git push origin HEAD && git push origin vX.Y.Z
 #
-# Tags:
+# Git tags:
+#   v0.1.0     → image :0.1.0 (+ :latest)
+#   dbt_0.1.0  → same (pi_docker-style {image}_{version})
+#
+# Destinations:
 #   ghcr.io/<owner>/<repo>/dbt:<version>  (+ :latest)
 #   europe-west1-docker.pkg.dev/pi-storage-258815/pi/dbt:<version>  (+ :latest)
-#
-# Optional git tag form (same as pi_docker): dbt_0.1.0
 #
 # GCP auth (optional; GHCR still publishes without it):
 #   WIF:  vars.GCP_WORKLOAD_IDENTITY_PROVIDER + vars.GCP_SERVICE_ACCOUNT
@@ -14,16 +16,14 @@ name: Build image
 
 on:
   push:
-    branches:
-      - main
     tags:
+      - "v*"
       - "*_*"
-  pull_request:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image version to build (default: VERSION file)"
-        required: false
+        description: "Image version to build (e.g. 0.1.0 or v0.1.0)"
+        required: true
         type: string
 
 permissions:
@@ -55,17 +55,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG="${{ github.ref_name }}"
-            if [[ "$TAG" != *_* ]]; then
-              echo "::error::Tag must look like {image}_{version} (got: $TAG)"
-              exit 1
-            fi
-            VERSION="${TAG#*_}"
           else
-            VERSION="$(tr -d '[:space:]' < VERSION)"
+            VERSION="${{ github.ref_name }}"
+          fi
+          VERSION="${VERSION#v}"
+          if [[ "$VERSION" == *_* ]]; then
+            VERSION="${VERSION#*_}"
           fi
 
           OWNER_REPO="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
@@ -82,7 +79,6 @@ jobs:
           echo "  AR   → ${AR_REGISTRY}/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${IMAGE_NAME}"
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -90,44 +86,27 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Authenticate to Google Cloud (WIF)
-        if: github.event_name != 'pull_request' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - name: Authenticate to Google Cloud (service account key)
-        if: github.event_name != 'pull_request' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' && secrets.GCP_SERVICE_KEY != ''
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' && secrets.GCP_SERVICE_KEY != '' }}
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_KEY }}
 
       - name: Set up gcloud
-        if: github.event_name != 'pull_request' && (vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' || secrets.GCP_SERVICE_KEY != '')
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' || secrets.GCP_SERVICE_KEY != '' }}
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for Artifact Registry
-        if: github.event_name != 'pull_request' && (vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' || secrets.GCP_SERVICE_KEY != '')
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' || secrets.GCP_SERVICE_KEY != '' }}
         run: gcloud auth configure-docker "${{ steps.meta.outputs.ar_registry }}" --quiet
 
-      - name: Build image
-        shell: bash
-        run: |
-          set -euo pipefail
-          REGISTRY_ARGS=(--registry "${{ steps.meta.outputs.ghcr_prefix }}")
-          if [[ "${{ github.event_name }}" != "pull_request" && ( -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" || -n "${{ secrets.GCP_SERVICE_KEY }}" ) ]]; then
-            REGISTRY_ARGS+=(--registry "${{ steps.meta.outputs.ar_prefix }}")
-          fi
-          python3 build.py \
-            --name "${IMAGE_NAME}" \
-            --version "${{ steps.meta.outputs.version }}" \
-            "${REGISTRY_ARGS[@]}"
-
-      - name: Smoke test
-        run: docker run --rm "${IMAGE_NAME}:${{ steps.meta.outputs.version }}" dbt --version
-
-      - name: Push image
-        if: github.event_name != 'pull_request'
+      - name: Build, smoke-test, and push
         shell: bash
         run: |
           set -euo pipefail
