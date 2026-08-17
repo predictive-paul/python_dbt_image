@@ -1,0 +1,3 @@
+# Packages pi_dbt currently pip-installs on every CI run
+# (see pi_dbt/ci/requirements.txt and .github/workflows/pages.yml).
+dbt-bigquery==1.11.3

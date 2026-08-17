@@ -1,0 +1,27 @@
+# Optional GCP Cloud Build path (same destinations as pi_docker).
+# GitHub Actions is the primary publisher; this exists so a tag trigger
+# on Artifact Registry / Cloud Build still works.
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile'
+      - '-t'
+      - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/dbt:${_IMAGE_VERSION}'
+      - '-t'
+      - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/dbt:latest'
+      - '.'
+
+images:
+  - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/dbt:${_IMAGE_VERSION}'
+  - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/dbt:latest'
+
+substitutions:
+  _LOCATION: europe-west1
+  _REPOSITORY: pi
+  _IMAGE_VERSION: 0.1.0
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitution_option: ALLOW_LOOSE
