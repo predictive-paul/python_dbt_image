@@ -11,7 +11,7 @@
 #
 # GCP auth (optional; GHCR still publishes without it):
 #   WIF:  vars.GCP_WORKLOAD_IDENTITY_PROVIDER + vars.GCP_SERVICE_ACCOUNT
-#   Key:  secrets.GCP_SERVICE_KEY
+#   Key:  secrets.GCP_SERVICE_KEY (exposed to steps as env.HAS_GCP_KEY, not in if:)
 name: Build image
 
 on:
@@ -46,6 +46,9 @@ jobs:
     name: Build and push
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      HAS_GCP_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+      HAS_GCP_KEY: ${{ secrets.GCP_SERVICE_KEY != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,24 +89,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        if: env.HAS_GCP_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - name: Authenticate to Google Cloud (service account key)
-        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' && secrets.GCP_SERVICE_KEY != '' }}
+        if: env.HAS_GCP_WIF != 'true' && env.HAS_GCP_KEY == 'true'
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_KEY }}
 
       - name: Set up gcloud
-        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' || secrets.GCP_SERVICE_KEY != '' }}
+        if: env.HAS_GCP_WIF == 'true' || env.HAS_GCP_KEY == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for Artifact Registry
-        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' || secrets.GCP_SERVICE_KEY != '' }}
+        if: env.HAS_GCP_WIF == 'true' || env.HAS_GCP_KEY == 'true'
         run: gcloud auth configure-docker "${{ steps.meta.outputs.ar_registry }}" --quiet
 
       - name: Build, smoke-test, and push
@@ -111,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           REGISTRY_ARGS=(--registry "${{ steps.meta.outputs.ghcr_prefix }}")
-          if [[ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" || -n "${{ secrets.GCP_SERVICE_KEY }}" ]]; then
+          if [[ "${HAS_GCP_WIF}" == "true" || "${HAS_GCP_KEY}" == "true" ]]; then
             REGISTRY_ARGS+=(--registry "${{ steps.meta.outputs.ar_prefix }}")
           fi
           python3 build.py \
