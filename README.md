@@ -26,7 +26,7 @@ Default image name is `dbt`. Version comes from [`VERSION`](VERSION) (currently 
 | GHCR | `ghcr.io/predictive-paul/python_dbt_image/dbt:0.1.0` |
 | Artifact Registry | `europe-west1-docker.pkg.dev/pi-storage-258815/pi/dbt:0.1.0` |
 
-Git tags of the form `{image}_{version}` (e.g. `dbt_0.1.0`) also trigger a build, matching [pi_docker](https://github.com/predictiveinsights/pi_docker).
+Pushing a `v*` git tag publishes that version (`v0.1.0` → `:0.1.0` and `:latest`). Tags of the form `{image}_{version}` (e.g. `dbt_0.1.0`) also work, matching [pi_docker](https://github.com/predictiveinsights/pi_docker).
 
 ## Build locally
 
@@ -53,14 +53,25 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u USER --password-stdin
 gcloud auth configure-docker europe-west1-docker.pkg.dev
 ```
 
-## CI publish
+## Publish
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs `build.py` on `main`, on `dbt_*` tags, and via `workflow_dispatch`.
+Increment `VERSION`, commit, and create an annotated git tag. Pushing that tag
+publishes the image (or run **Build image** from Actions):
+
+```bash
+python3 build.py --bump patch   # 0.1.0 → 0.1.1, commit, tag v0.1.1
+git push origin HEAD
+git push origin v0.1.1
+```
+
+`--bump minor` and `--bump major` reset the lower parts (`0.1.0` → `0.2.0` /
+`1.0.0`). The workflow tags the image with the semver from the git tag
+(`v0.1.1` → `:0.1.1` and `:latest`).
+
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs `build.py --push` on `v*` / `dbt_*` tags and via `workflow_dispatch`.
 
 - Always pushes to **GHCR** (using `GITHUB_TOKEN`).
 - Pushes to **Artifact Registry** only when GCP Workload Identity or `GCP_SERVICE_KEY` is configured (same vars/secrets as pi_docker).
-
-Pull requests build and smoke-test (`dbt --version`) but do not push.
 
 `cloudbuild.yaml` is an optional GCP-side equivalent if you already trigger Cloud Build from git tags.
 
